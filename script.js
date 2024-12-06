@@ -1,0 +1,335 @@
+class MultiplayerMatch3Game {
+    constructor() {
+        this.socket = io();
+        this.grid = [];
+        this.gridSize = 8;
+        this.selectedGem = null;
+        this.gemTypes = ['red', 'blue', 'green', 'yellow', 'purple', 'orange'];
+        this.gridElement = document.querySelector('.grid');
+        this.playerId = null;
+        this.gameActive = false;
+        this.setupSocketListeners();
+        this.setupUIListeners();
+    }
+
+    setupSocketListeners() {
+        this.socket.on('roomJoined', ({ roomId }) => {
+            console.log('Joined room:', roomId);
+        });
+
+        this.socket.on('gameStart', ({ players, endTime }) => {
+            this.gameActive = true;
+            this.showGameScreen();
+            this.startTimer(endTime);
+            this.updatePlayersList(players);
+            this.init();
+        });
+
+        this.socket.on('playerMove', (data) => {
+            if (data.playerId !== this.socket.id) {
+                this.showOpponentMove(data);
+            }
+        });
+
+        this.socket.on('scoreUpdate', ({ playerId, score }) => {
+            this.updatePlayerScore(playerId, score);
+        });
+
+        this.socket.on('gameEnd', ({ scores }) => {
+            this.gameActive = false;
+            this.showEndScreen(scores);
+        });
+    }
+
+    setupUIListeners() {
+        document.getElementById('join-game').addEventListener('click', () => {
+            const playerName = document.getElementById('player-name').value.trim();
+            if (playerName) {
+                this.socket.emit('joinGame', playerName);
+            }
+        });
+
+        document.getElementById('play-again').addEventListener('click', () => {
+            location.reload();
+        });
+    }
+
+    showGameScreen() {
+        document.getElementById('login-screen').classList.add('hidden');
+        document.getElementById('game-screen').classList.remove('hidden');
+    }
+
+    showEndScreen(scores) {
+        document.getElementById('game-screen').classList.add('hidden');
+        document.getElementById('end-screen').classList.remove('hidden');
+        
+        const scoresHtml = scores.map((score, index) => `
+            <div class="score-entry ${index === 0 ? 'winner' : ''}">
+                ${index + 1}. ${score.name}: ${score.score}
+            </div>
+        `).join('');
+        
+        document.getElementById('final-scores').innerHTML = scoresHtml;
+    }
+
+    updatePlayersList(players) {
+        const playersHtml = players.map(player => `
+            <div class="player-score ${player.id === this.socket.id ? 'current' : ''}" id="player-${player.id}">
+                ${player.name}: <span class="score">${player.score}</span>
+            </div>
+        `).join('');
+        
+        document.getElementById('players-list').innerHTML = playersHtml;
+    }
+
+    updatePlayerScore(playerId, score) {
+        const playerElement = document.getElementById(`player-${playerId}`);
+        if (playerElement) {
+            playerElement.querySelector('.score').textContent = score;
+        }
+    }
+
+    startTimer(endTime) {
+        const timerElement = document.getElementById('timer');
+        
+        const updateTimer = () => {
+            const now = Date.now();
+            const timeLeft = Math.max(0, endTime - now);
+            
+            if (timeLeft === 0) {
+                clearInterval(this.timerInterval);
+                return;
+            }
+
+            const minutes = Math.floor(timeLeft / 60000);
+            const seconds = Math.floor((timeLeft % 60000) / 1000);
+            timerElement.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        };
+
+        this.timerInterval = setInterval(updateTimer, 1000);
+        updateTimer();
+    }
+
+    init() {
+        this.createGrid();
+        this.renderGrid();
+        this.checkAndRemoveMatches();
+    }
+
+    createGrid() {
+        for (let row = 0; row < this.gridSize; row++) {
+            this.grid[row] = [];
+            for (let col = 0; col < this.gridSize; col++) {
+                let gemType;
+                do {
+                    gemType = this.getRandomGemType();
+                    this.grid[row][col] = gemType;
+                } while (this.checkInitialMatch(row, col));
+            }
+        }
+    }
+
+    getRandomGemType() {
+        return this.gemTypes[Math.floor(Math.random() * this.gemTypes.length)];
+    }
+
+    checkInitialMatch(row, col) {
+        if (col >= 2) {
+            if (this.grid[row][col-1] === this.grid[row][col] && 
+                this.grid[row][col-2] === this.grid[row][col]) {
+                return true;
+            }
+        }
+        if (row >= 2) {
+            if (this.grid[row-1][col] === this.grid[row][col] && 
+                this.grid[row-2][col] === this.grid[row][col]) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    renderGrid() {
+        this.gridElement.innerHTML = '';
+        for (let row = 0; row < this.gridSize; row++) {
+            for (let col = 0; col < this.gridSize; col++) {
+                const gem = document.createElement('div');
+                gem.className = `gem gem-${this.grid[row][col]}`;
+                gem.dataset.row = row;
+                gem.dataset.col = col;
+                gem.addEventListener('click', () => this.handleGemClick(row, col));
+                this.gridElement.appendChild(gem);
+            }
+        }
+    }
+
+    handleGemClick(row, col) {
+        if (!this.gameActive) return;
+
+        const clickedGem = { row, col };
+        
+        if (!this.selectedGem) {
+            this.selectedGem = clickedGem;
+            this.getGemElement(row, col).classList.add('selected');
+        } else {
+            const previousGem = this.getGemElement(this.selectedGem.row, this.selectedGem.col);
+            previousGem.classList.remove('selected');
+
+            if (this.isAdjacent(this.selectedGem, clickedGem)) {
+                this.swapGems(this.selectedGem, clickedGem);
+                // Emit move to server
+                this.socket.emit('move', {
+                    from: this.selectedGem,
+                    to: clickedGem
+                });
+            }
+            
+            this.selectedGem = null;
+        }
+    }
+
+    showOpponentMove(data) {
+        const { from, to } = data;
+        this.swapGems(from, to);
+    }
+
+    isAdjacent(gem1, gem2) {
+        const rowDiff = Math.abs(gem1.row - gem2.row);
+        const colDiff = Math.abs(gem1.col - gem2.col);
+        return (rowDiff === 1 && colDiff === 0) || (rowDiff === 0 && colDiff === 1);
+    }
+
+    async swapGems(gem1, gem2) {
+        const temp = this.grid[gem1.row][gem1.col];
+        this.grid[gem1.row][gem1.col] = this.grid[gem2.row][gem2.col];
+        this.grid[gem2.row][gem2.col] = temp;
+        
+        this.renderGrid();
+
+        if (!await this.checkAndRemoveMatches()) {
+            const temp = this.grid[gem1.row][gem1.col];
+            this.grid[gem1.row][gem1.col] = this.grid[gem2.row][gem2.col];
+            this.grid[gem2.row][gem2.col] = temp;
+            this.renderGrid();
+        }
+    }
+
+    getGemElement(row, col) {
+        return this.gridElement.children[row * this.gridSize + col];
+    }
+
+    async checkAndRemoveMatches() {
+        const matches = this.findMatches();
+        if (matches.length === 0) return false;
+
+        matches.flat().forEach(({row, col}) => {
+            const gem = this.getGemElement(row, col);
+            gem.classList.add('matched');
+        });
+
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+        const points = matches.reduce((total, match) => total + match.length * 10, 0);
+        this.socket.emit('scoreUpdate', points);
+
+        matches.forEach(match => {
+            match.forEach(({row, col}) => {
+                this.grid[row][col] = null;
+            });
+        });
+
+        await this.dropGems();
+        this.fillEmptySpaces();
+        this.renderGrid();
+        await this.checkAndRemoveMatches();
+        return true;
+    }
+
+    findMatches() {
+        const matches = [];
+        
+        // Check horizontal matches
+        for (let row = 0; row < this.gridSize; row++) {
+            for (let col = 0; col < this.gridSize - 2; col++) {
+                const match = this.checkMatch(row, col, 0, 1);
+                if (match.length >= 3) matches.push(match);
+            }
+        }
+
+        // Check vertical matches
+        for (let row = 0; row < this.gridSize - 2; row++) {
+            for (let col = 0; col < this.gridSize; col++) {
+                const match = this.checkMatch(row, col, 1, 0);
+                if (match.length >= 3) matches.push(match);
+            }
+        }
+
+        return matches;
+    }
+
+    checkMatch(row, col, rowDelta, colDelta) {
+        const match = [{row, col}];
+        const gemType = this.grid[row][col];
+        
+        if (!gemType) return [];
+
+        let currentRow = row + rowDelta;
+        let currentCol = col + colDelta;
+
+        while (
+            currentRow < this.gridSize && 
+            currentCol < this.gridSize && 
+            this.grid[currentRow][currentCol] === gemType
+        ) {
+            match.push({row: currentRow, col: currentCol});
+            currentRow += rowDelta;
+            currentCol += colDelta;
+        }
+
+        return match;
+    }
+
+    async dropGems() {
+        let dropped = false;
+
+        for (let col = 0; col < this.gridSize; col++) {
+            let emptyRow = this.gridSize - 1;
+            
+            while (emptyRow >= 0) {
+                if (this.grid[emptyRow][col] === null) {
+                    let gemRow = emptyRow - 1;
+                    while (gemRow >= 0 && this.grid[gemRow][col] === null) {
+                        gemRow--;
+                    }
+
+                    if (gemRow >= 0) {
+                        this.grid[emptyRow][col] = this.grid[gemRow][col];
+                        this.grid[gemRow][col] = null;
+                        dropped = true;
+                    }
+                }
+                emptyRow--;
+            }
+        }
+
+        if (dropped) {
+            this.renderGrid();
+            await new Promise(resolve => setTimeout(resolve, 300));
+        }
+    }
+
+    fillEmptySpaces() {
+        for (let row = 0; row < this.gridSize; row++) {
+            for (let col = 0; col < this.gridSize; col++) {
+                if (this.grid[row][col] === null) {
+                    this.grid[row][col] = this.getRandomGemType();
+                }
+            }
+        }
+    }
+}
+
+// Start the game when the page loads
+document.addEventListener('DOMContentLoaded', () => {
+    new MultiplayerMatch3Game();
+});
