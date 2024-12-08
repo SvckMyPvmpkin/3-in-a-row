@@ -6,13 +6,85 @@ class MultiplayerMatch3Game {
         this.selectedGem = null;
         this.gemTypes = ['red', 'blue', 'green', 'yellow', 'purple', 'orange'];
         this.gridElement = document.querySelector('.grid');
-        this.gemElements = new Map(); // Кэш DOM-элементов
+        this.gemElements = new Map();
         this.cellSize = 52; // 50px + 2px gap
         this.playerId = null;
         this.gameActive = false;
         this.isAnimating = false;
+        
+        // Добавляем обработчик кликов на всю сетку
+        this.gridElement.addEventListener('click', (e) => this.handleGridClick(e));
+        
         this.setupSocketListeners();
         this.setupUIListeners();
+    }
+
+    getClickCoordinates(event) {
+        const rect = this.gridElement.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        
+        // Вычисляем координаты в сетке
+        const col = Math.floor(x / this.cellSize);
+        const row = Math.floor(y / this.cellSize);
+        
+        // Проверяем, что координаты в пределах сетки
+        if (row >= 0 && row < this.gridSize && col >= 0 && col < this.gridSize) {
+            return { row, col };
+        }
+        return null;
+    }
+
+    handleGridClick(event) {
+        if (!this.gameActive || this.isAnimating) return;
+
+        const coords = this.getClickCoordinates(event);
+        if (!coords) return;
+
+        const { row, col } = coords;
+        
+        if (!this.selectedGem) {
+            this.selectedGem = { row, col };
+            const gem = this.getGemElement(row, col);
+            if (gem) {
+                gem.classList.add('selected');
+            }
+        } else {
+            const previousGem = this.getGemElement(this.selectedGem.row, this.selectedGem.col);
+            if (previousGem) {
+                previousGem.classList.remove('selected');
+            }
+
+            if (this.isAdjacent(this.selectedGem, { row, col })) {
+                this.swapGems(this.selectedGem, { row, col });
+                this.socket.emit('move', {
+                    from: this.selectedGem,
+                    to: { row, col }
+                });
+            }
+            
+            this.selectedGem = null;
+        }
+    }
+
+    updateGemPosition(element, row, col) {
+        if (!element) return;
+        element.style.transform = `translate(${col * this.cellSize}px, ${row * this.cellSize}px)`;
+    }
+
+    renderGrid() {
+        this.gridElement.innerHTML = '';
+        this.gemElements.clear();
+        
+        for (let row = 0; row < this.gridSize; row++) {
+            for (let col = 0; col < this.gridSize; col++) {
+                const gem = document.createElement('div');
+                gem.className = `gem gem-${this.grid[row][col]}`;
+                this.updateGemPosition(gem, row, col);
+                this.gridElement.appendChild(gem);
+                this.gemElements.set(`${row}-${col}`, gem);
+            }
+        }
     }
 
     setupSocketListeners() {
@@ -155,24 +227,6 @@ class MultiplayerMatch3Game {
         return false;
     }
 
-    renderGrid() {
-        this.gridElement.innerHTML = '';
-        this.gemElements.clear();
-        
-        for (let row = 0; row < this.gridSize; row++) {
-            for (let col = 0; col < this.gridSize; col++) {
-                const gem = document.createElement('div');
-                gem.className = `gem gem-${this.grid[row][col]}`;
-                gem.style.transform = `translate(${col * this.cellSize}px, ${row * this.cellSize}px)`;
-                gem.dataset.row = row;
-                gem.dataset.col = col;
-                gem.addEventListener('click', () => this.handleGemClick(row, col));
-                this.gridElement.appendChild(gem);
-                this.gemElements.set(`${row}-${col}`, gem);
-            }
-        }
-    }
-
     getGemElement(row, col) {
         const key = `${row}-${col}`;
         const element = this.gemElements.get(key);
@@ -187,35 +241,10 @@ class MultiplayerMatch3Game {
         return null;
     }
 
-    updateGemPosition(element, row, col) {
-        if (!element) return;
-        element.style.transform = `translate(${col * this.cellSize}px, ${row * this.cellSize}px)`;
-        element.dataset.row = row;
-        element.dataset.col = col;
-    }
-
-    handleGemClick(row, col) {
-        if (!this.gameActive || this.isAnimating) return;
-
-        const clickedGem = { row, col };
-        
-        if (!this.selectedGem) {
-            this.selectedGem = clickedGem;
-            this.getGemElement(row, col)?.classList.add('selected');
-        } else {
-            const previousGem = this.getGemElement(this.selectedGem.row, this.selectedGem.col);
-            previousGem?.classList.remove('selected');
-
-            if (this.isAdjacent(this.selectedGem, clickedGem)) {
-                this.swapGems(this.selectedGem, clickedGem);
-                this.socket.emit('move', {
-                    from: this.selectedGem,
-                    to: clickedGem
-                });
-            }
-            
-            this.selectedGem = null;
-        }
+    isAdjacent(gem1, gem2) {
+        const rowDiff = Math.abs(gem1.row - gem2.row);
+        const colDiff = Math.abs(gem1.col - gem2.col);
+        return (rowDiff === 1 && colDiff === 0) || (rowDiff === 0 && colDiff === 1);
     }
 
     showOpponentMove(data) {
@@ -226,12 +255,6 @@ class MultiplayerMatch3Game {
     handleServerMove(data) {
         const { from, to } = data;
         this.swapGems(from, to);
-    }
-
-    isAdjacent(gem1, gem2) {
-        const rowDiff = Math.abs(gem1.row - gem2.row);
-        const colDiff = Math.abs(gem1.col - gem2.col);
-        return (rowDiff === 1 && colDiff === 0) || (rowDiff === 0 && colDiff === 1);
     }
 
     async swapGems(gem1, gem2) {
@@ -401,7 +424,7 @@ class MultiplayerMatch3Game {
                     gem.addEventListener('click', (e) => {
                         const currentRow = parseInt(gem.dataset.row);
                         const currentCol = parseInt(gem.dataset.col);
-                        this.handleGemClick(currentRow, currentCol);
+                        this.handleGridClick(e);
                     });
 
                     newGems.push({
