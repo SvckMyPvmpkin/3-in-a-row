@@ -1,45 +1,29 @@
-# Multiplayer Match-3 Game
+# Три в ряд Online
 
-A real-time multiplayer Match-3 game where 2-4 players compete to get the highest score in 5 minutes.
+Соревновательная онлайн игра в реальном времени представляющая из себя классическую игру "Три в ряд".
 
 ## Features
 
-- 2-4 player support
-- Real-time gameplay
-- Live score updates
-- 5-minute time limit
-- Beautiful animations
-- Responsive design
+- Поддержка от 2-х до 4-х игроков
+- Игровой процесс в реальном времени
+- Обновление очков в реальном времени
+- Одна сессия - 5 минут
+- Простой и понятный дизайн
 
 ## How to Play
 
-1. Enter your name and click "Join Game"
-2. Wait for other players (2-4 total)
-3. Make matches of 3 or more gems
-4. See other players' moves in real-time
-5. Highest score after 5 minutes wins!
-
-## Development
-
-1. Install dependencies:
-```bash
-npm install
-```
-
-2. Start the server:
-```bash
-node server.js
-```
-
-3. Open `http://localhost:3000` in your browser
+1. Для начала нужно ввести своё имя, после чего нажать кнопку "Join game"
+2. Дождаться других игроков 
+3. Перемещать камни для постановки МИНИМУМ трёх одинаковых камней в ряд (1 камень в цепочке = 10 очков)
+5. Игрок, с самым большим количеством очков по истечению 5-ти минут, побеждает!
 
 ## Deployment
 
-The game can be deployed to any Node.js hosting platform. Here's how to deploy to Render:
+Игра может быть "развёрнута" на любом онлайн хостинге, который поддерживает Node.js, вот как развернуть игру на платформе Render:
 
-1. Create a new Web Service on Render
-2. Connect your GitHub repository
-3. Use the following settings:
+1. Создайте новый "Веб-сервис" на платформе Render
+2. Подключите к этому сервису нужный репозиторий GitHub
+3. В настройках сервиса должно быть следующее:
    - Build Command: `npm install`
    - Start Command: `node server.js`
-4. Deploy!
+4. Приложение автоматически развернётся, если нет ошибок!
