@@ -270,12 +270,49 @@ class MultiplayerMatch3Game {
         this.isAnimating = false;
     }
 
+    async checkAndRemoveMatches() {
+        const matches = this.findMatches();
+        if (matches.length === 0) return false;
+
+        // Помечаем совпавшие элементы для анимации
+        const matchedElements = new Set();
+        matches.flat().forEach(({row, col}) => {
+            const gem = this.getGemElement(row, col);
+            if (gem) {
+                gem.classList.add('matched');
+                matchedElements.add(`${row}-${col}`);
+            }
+        });
+
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+        // Удаляем совпавшие элементы
+        matchedElements.forEach(key => {
+            const [row, col] = key.split('-').map(Number);
+            const gem = this.getGemElement(row, col);
+            if (gem && gem.parentNode) {
+                gem.parentNode.removeChild(gem);
+            }
+            this.gemElements.delete(key);
+            this.grid[row][col] = null;
+        });
+
+        const points = matches.reduce((total, match) => total + match.length * 10, 0);
+        this.socket.emit('scoreUpdate', points);
+
+        await this.dropGems();
+        await this.fillEmptySpaces();
+        await this.checkAndRemoveMatches();
+        return true;
+    }
+
     async dropGems() {
         let dropped = false;
+        let moves = [];
 
+        // Собираем все движения перед анимацией
         for (let col = 0; col < this.gridSize; col++) {
             let emptyRow = this.gridSize - 1;
-            
             while (emptyRow >= 0) {
                 if (this.grid[emptyRow][col] === null) {
                     let gemRow = emptyRow - 1;
@@ -286,14 +323,21 @@ class MultiplayerMatch3Game {
                     if (gemRow >= 0) {
                         const gem = this.getGemElement(gemRow, col);
                         if (gem) {
-                            gem.classList.add('dropping');
-                            gem.style.transform = `translate(${col * this.cellSize}px, ${emptyRow * this.cellSize}px)`;
+                            moves.push({
+                                element: gem,
+                                fromRow: gemRow,
+                                fromCol: col,
+                                toRow: emptyRow,
+                                toCol: col
+                            });
                             
+                            // Обновляем данные в сетке
                             this.grid[emptyRow][col] = this.grid[gemRow][col];
                             this.grid[gemRow][col] = null;
                             
-                            this.gemElements.set(`${emptyRow}-${col}`, gem);
+                            // Обновляем кэш элементов
                             this.gemElements.delete(`${gemRow}-${col}`);
+                            this.gemElements.set(`${emptyRow}-${col}`, gem);
                             
                             dropped = true;
                         }
@@ -303,15 +347,27 @@ class MultiplayerMatch3Game {
             }
         }
 
-        if (dropped) {
+        // Применяем все движения одновременно
+        if (moves.length > 0) {
+            moves.forEach(move => {
+                move.element.classList.add('dropping');
+                move.element.style.transform = 
+                    `translate(${move.toCol * this.cellSize}px, ${move.toRow * this.cellSize}px)`;
+            });
+
             await new Promise(resolve => setTimeout(resolve, 300));
-            document.querySelectorAll('.gem.dropping').forEach(gem => {
-                gem.classList.remove('dropping');
+
+            moves.forEach(move => {
+                move.element.classList.remove('dropping');
             });
         }
+
+        return dropped;
     }
 
     fillEmptySpaces() {
+        const newGems = [];
+
         for (let row = 0; row < this.gridSize; row++) {
             for (let col = 0; col < this.gridSize; col++) {
                 if (this.grid[row][col] === null) {
@@ -320,7 +376,6 @@ class MultiplayerMatch3Game {
                     
                     const gem = document.createElement('div');
                     gem.className = `gem gem-${gemType}`;
-                    gem.style.transform = `translate(${col * this.cellSize}px, ${row * this.cellSize}px)`;
                     gem.dataset.row = row;
                     gem.dataset.col = col;
                     gem.addEventListener('click', () => this.handleGemClick(row, col));
@@ -329,43 +384,32 @@ class MultiplayerMatch3Game {
                     gem.style.transform = `translate(${col * this.cellSize}px, ${-this.cellSize}px)`;
                     this.gridElement.appendChild(gem);
                     
-                    // Анимация падения
-                    requestAnimationFrame(() => {
-                        gem.classList.add('dropping');
-                        gem.style.transform = `translate(${col * this.cellSize}px, ${row * this.cellSize}px)`;
+                    newGems.push({
+                        element: gem,
+                        row: row,
+                        col: col
                     });
                     
                     this.gemElements.set(`${row}-${col}`, gem);
                 }
             }
         }
-    }
 
-    async checkAndRemoveMatches() {
-        const matches = this.findMatches();
-        if (matches.length === 0) return false;
-
-        matches.flat().forEach(({row, col}) => {
-            const gem = this.getGemElement(row, col);
-            gem.classList.add('matched');
-        });
-
-        await new Promise(resolve => setTimeout(resolve, 300));
-
-        const points = matches.reduce((total, match) => total + match.length * 10, 0);
-        this.socket.emit('scoreUpdate', points);
-
-        matches.forEach(match => {
-            match.forEach(({row, col}) => {
-                this.grid[row][col] = null;
+        // Анимируем все новые камни одновременно
+        if (newGems.length > 0) {
+            requestAnimationFrame(() => {
+                newGems.forEach(({element, row, col}) => {
+                    element.classList.add('dropping');
+                    element.style.transform = `translate(${col * this.cellSize}px, ${row * this.cellSize}px)`;
+                });
             });
-        });
 
-        await this.dropGems();
-        this.fillEmptySpaces();
-        this.renderGrid();
-        await this.checkAndRemoveMatches();
-        return true;
+            setTimeout(() => {
+                newGems.forEach(({element}) => {
+                    element.classList.remove('dropping');
+                });
+            }, 300);
+        }
     }
 
     findMatches() {
