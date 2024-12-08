@@ -20,17 +20,20 @@ class MultiplayerMatch3Game {
             console.log('Joined room:', roomId);
         });
 
-        this.socket.on('gameStart', ({ players, endTime }) => {
+        this.socket.on('gameStart', ({ players, endTime, grid }) => {
             this.gameActive = true;
             this.showGameScreen();
             this.startTimer(endTime);
             this.updatePlayersList(players);
+            // Используем полученную с сервера сетку
+            this.grid = grid;
             this.init();
         });
 
         this.socket.on('playerMove', (data) => {
-            if (data.playerId !== this.socket.id) {
-                this.showOpponentMove(data);
+            // Обрабатываем только свои ходы
+            if (data.playerId === this.socket.id) {
+                this.handleServerMove(data);
             }
         });
 
@@ -114,7 +117,7 @@ class MultiplayerMatch3Game {
     }
 
     init() {
-        this.createGrid();
+        // Больше не создаем сетку здесь, так как получаем её с сервера
         this.renderGrid();
         this.checkAndRemoveMatches();
     }
@@ -200,6 +203,11 @@ class MultiplayerMatch3Game {
     }
 
     showOpponentMove(data) {
+        const { from, to } = data;
+        this.swapGems(from, to);
+    }
+
+    handleServerMove(data) {
         const { from, to } = data;
         this.swapGems(from, to);
     }
