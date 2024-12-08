@@ -24,6 +24,7 @@ class GameRoom {
         this.players = new Map();
         this.gameStarted = false;
         this.gameEndTime = null;
+        this.playerGrids = new Map(); // Хранение отдельных полей для каждого игрока
     }
 
     addPlayer(socket, playerName) {
@@ -34,13 +35,52 @@ class GameRoom {
             socket: socket
         });
 
+        // Создаем новое поле для игрока
+        this.playerGrids.set(socket.id, this.generateInitialGrid());
+
         if (this.players.size >= MIN_PLAYERS && !this.gameStarted) {
             this.startGame();
         }
     }
 
+    generateInitialGrid() {
+        const gridSize = 8;
+        const gemTypes = ['red', 'blue', 'green', 'yellow', 'purple', 'orange'];
+        const grid = [];
+
+        for (let row = 0; row < gridSize; row++) {
+            grid[row] = [];
+            for (let col = 0; col < gridSize; col++) {
+                let gemType;
+                do {
+                    gemType = gemTypes[Math.floor(Math.random() * gemTypes.length)];
+                    grid[row][col] = gemType;
+                } while (this.checkInitialMatch(grid, row, col));
+            }
+        }
+
+        return grid;
+    }
+
+    checkInitialMatch(grid, row, col) {
+        if (col >= 2) {
+            if (grid[row][col-1] === grid[row][col] && 
+                grid[row][col-2] === grid[row][col]) {
+                return true;
+            }
+        }
+        if (row >= 2) {
+            if (grid[row-1][col] === grid[row][col] && 
+                grid[row-2][col] === grid[row][col]) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     removePlayer(socketId) {
         this.players.delete(socketId);
+        this.playerGrids.delete(socketId);
         if (this.players.size < MIN_PLAYERS && this.gameStarted) {
             this.endGame();
         }
@@ -50,13 +90,17 @@ class GameRoom {
         this.gameStarted = true;
         this.gameEndTime = Date.now() + GAME_DURATION;
         
-        this.broadcast('gameStart', {
-            players: Array.from(this.players.values()).map(p => ({
-                id: p.id,
-                name: p.name,
-                score: p.score
-            })),
-            endTime: this.gameEndTime
+        // Отправляем каждому игроку его собственное поле
+        this.players.forEach(player => {
+            player.socket.emit('gameStart', {
+                players: Array.from(this.players.values()).map(p => ({
+                    id: p.id,
+                    name: p.name,
+                    score: p.score
+                })),
+                endTime: this.gameEndTime,
+                grid: this.playerGrids.get(player.id)
+            });
         });
 
         setTimeout(() => this.endGame(), GAME_DURATION);
@@ -95,6 +139,22 @@ class GameRoom {
     isFull() {
         return this.players.size >= MAX_PLAYERS;
     }
+
+    handleMove(socketId, moveData) {
+        if (!this.gameStarted) return;
+
+        const playerGrid = this.playerGrids.get(socketId);
+        if (!playerGrid) return;
+
+        // Обновляем только сетку игрока, который сделал ход
+        const player = this.players.get(socketId);
+        if (player) {
+            player.socket.emit('playerMove', {
+                playerId: socketId,
+                ...moveData
+            });
+        }
+    }
 }
 
 const rooms = new Map();
@@ -121,10 +181,7 @@ io.on('connection', (socket) => {
 
     socket.on('move', (data) => {
         if (currentRoom && currentRoom.gameStarted) {
-            currentRoom.broadcast('playerMove', {
-                playerId: socket.id,
-                ...data
-            });
+            currentRoom.handleMove(socket.id, data);
         }
     });
 
