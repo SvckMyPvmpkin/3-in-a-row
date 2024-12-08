@@ -174,24 +174,40 @@ class MultiplayerMatch3Game {
     }
 
     getGemElement(row, col) {
-        return this.gemElements.get(`${row}-${col}`);
+        const key = `${row}-${col}`;
+        const element = this.gemElements.get(key);
+        if (element) {
+            // Проверяем, что элемент все еще в DOM
+            if (!element.isConnected) {
+                this.gemElements.delete(key);
+                return null;
+            }
+            return element;
+        }
+        return null;
+    }
+
+    updateGemPosition(element, row, col) {
+        if (!element) return;
+        element.style.transform = `translate(${col * this.cellSize}px, ${row * this.cellSize}px)`;
+        element.dataset.row = row;
+        element.dataset.col = col;
     }
 
     handleGemClick(row, col) {
-        if (!this.gameActive) return;
+        if (!this.gameActive || this.isAnimating) return;
 
         const clickedGem = { row, col };
         
         if (!this.selectedGem) {
             this.selectedGem = clickedGem;
-            this.getGemElement(row, col).classList.add('selected');
+            this.getGemElement(row, col)?.classList.add('selected');
         } else {
             const previousGem = this.getGemElement(this.selectedGem.row, this.selectedGem.col);
-            previousGem.classList.remove('selected');
+            previousGem?.classList.remove('selected');
 
             if (this.isAdjacent(this.selectedGem, clickedGem)) {
                 this.swapGems(this.selectedGem, clickedGem);
-                // Emit move to server
                 this.socket.emit('move', {
                     from: this.selectedGem,
                     to: clickedGem
@@ -225,18 +241,19 @@ class MultiplayerMatch3Game {
         const element1 = this.getGemElement(gem1.row, gem1.col);
         const element2 = this.getGemElement(gem2.row, gem2.col);
 
-        // Добавляем класс для анимации
+        if (!element1 || !element2) {
+            this.isAnimating = false;
+            return;
+        }
+
         element1.classList.add('swapping');
         element2.classList.add('swapping');
 
-        // Меняем позиции в CSS
-        const pos1 = `translate(${gem1.col * this.cellSize}px, ${gem1.row * this.cellSize}px)`;
-        const pos2 = `translate(${gem2.col * this.cellSize}px, ${gem2.row * this.cellSize}px)`;
-        
-        element1.style.transform = pos2;
-        element2.style.transform = pos1;
+        // Обновляем позиции в DOM
+        this.updateGemPosition(element1, gem2.row, gem2.col);
+        this.updateGemPosition(element2, gem1.row, gem1.col);
 
-        // Меняем значения в сетке
+        // Обновляем данные в сетке
         const temp = this.grid[gem1.row][gem1.col];
         this.grid[gem1.row][gem1.col] = this.grid[gem2.row][gem2.col];
         this.grid[gem2.row][gem2.col] = temp;
@@ -245,17 +262,15 @@ class MultiplayerMatch3Game {
         this.gemElements.set(`${gem1.row}-${gem1.col}`, element2);
         this.gemElements.set(`${gem2.row}-${gem2.col}`, element1);
 
-        // Ждем завершения анимации
         await new Promise(resolve => setTimeout(resolve, 300));
 
         element1.classList.remove('swapping');
         element2.classList.remove('swapping');
 
-        // Проверяем совпадения
         if (!await this.checkAndRemoveMatches()) {
-            // Если совпадений нет, меняем обратно
-            element1.style.transform = pos1;
-            element2.style.transform = pos2;
+            // Отменяем свап
+            this.updateGemPosition(element1, gem1.row, gem1.col);
+            this.updateGemPosition(element2, gem2.row, gem2.col);
 
             const temp = this.grid[gem1.row][gem1.col];
             this.grid[gem1.row][gem1.col] = this.grid[gem2.row][gem2.col];
@@ -308,9 +323,9 @@ class MultiplayerMatch3Game {
 
     async dropGems() {
         let dropped = false;
-        let moves = [];
+        const moves = [];
 
-        // Собираем все движения перед анимацией
+        // Сначала собираем все возможные движения
         for (let col = 0; col < this.gridSize; col++) {
             let emptyRow = this.gridSize - 1;
             while (emptyRow >= 0) {
@@ -330,15 +345,11 @@ class MultiplayerMatch3Game {
                                 toRow: emptyRow,
                                 toCol: col
                             });
-                            
+
                             // Обновляем данные в сетке
                             this.grid[emptyRow][col] = this.grid[gemRow][col];
                             this.grid[gemRow][col] = null;
-                            
-                            // Обновляем кэш элементов
-                            this.gemElements.delete(`${gemRow}-${col}`);
-                            this.gemElements.set(`${emptyRow}-${col}`, gem);
-                            
+
                             dropped = true;
                         }
                     }
@@ -347,12 +358,15 @@ class MultiplayerMatch3Game {
             }
         }
 
-        // Применяем все движения одновременно
+        // Затем применяем все движения одновременно
         if (moves.length > 0) {
             moves.forEach(move => {
                 move.element.classList.add('dropping');
-                move.element.style.transform = 
-                    `translate(${move.toCol * this.cellSize}px, ${move.toRow * this.cellSize}px)`;
+                this.updateGemPosition(move.element, move.toRow, move.toCol);
+                
+                // Обновляем кэш элементов
+                this.gemElements.delete(`${move.fromRow}-${move.fromCol}`);
+                this.gemElements.set(`${move.toRow}-${move.toCol}`, move.element);
             });
 
             await new Promise(resolve => setTimeout(resolve, 300));
@@ -365,7 +379,7 @@ class MultiplayerMatch3Game {
         return dropped;
     }
 
-    fillEmptySpaces() {
+    async fillEmptySpaces() {
         const newGems = [];
 
         for (let row = 0; row < this.gridSize; row++) {
@@ -373,42 +387,48 @@ class MultiplayerMatch3Game {
                 if (this.grid[row][col] === null) {
                     const gemType = this.getRandomGemType();
                     this.grid[row][col] = gemType;
-                    
+
                     const gem = document.createElement('div');
                     gem.className = `gem gem-${gemType}`;
                     gem.dataset.row = row;
                     gem.dataset.col = col;
-                    gem.addEventListener('click', () => this.handleGemClick(row, col));
                     
                     // Начальная позиция над сеткой
                     gem.style.transform = `translate(${col * this.cellSize}px, ${-this.cellSize}px)`;
                     this.gridElement.appendChild(gem);
-                    
+
+                    // Добавляем обработчик клика после добавления в DOM
+                    gem.addEventListener('click', (e) => {
+                        const currentRow = parseInt(gem.dataset.row);
+                        const currentCol = parseInt(gem.dataset.col);
+                        this.handleGemClick(currentRow, currentCol);
+                    });
+
                     newGems.push({
                         element: gem,
                         row: row,
                         col: col
                     });
-                    
+
                     this.gemElements.set(`${row}-${col}`, gem);
                 }
             }
         }
 
-        // Анимируем все новые камни одновременно
         if (newGems.length > 0) {
+            // Анимируем падение новых камней
             requestAnimationFrame(() => {
                 newGems.forEach(({element, row, col}) => {
                     element.classList.add('dropping');
-                    element.style.transform = `translate(${col * this.cellSize}px, ${row * this.cellSize}px)`;
+                    this.updateGemPosition(element, row, col);
                 });
             });
 
-            setTimeout(() => {
-                newGems.forEach(({element}) => {
-                    element.classList.remove('dropping');
-                });
-            }, 300);
+            await new Promise(resolve => setTimeout(resolve, 300));
+
+            newGems.forEach(({element}) => {
+                element.classList.remove('dropping');
+            });
         }
     }
 
