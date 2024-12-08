@@ -28,9 +28,43 @@ class MultiplayerMatch3Game {
         const col = Math.floor(x / this.cellSize);
         const row = Math.floor(y / this.cellSize);
         
-        // Проверяем, что координаты в пределах сетки
+        // Добавляем проверку на валидность координат
         if (row >= 0 && row < this.gridSize && col >= 0 && col < this.gridSize) {
-            return { row, col };
+            // Проверяем, что в этой позиции действительно есть камень
+            const gem = this.getGemElement(row, col);
+            if (gem && this.grid[row][col]) {
+                // Проверяем, что позиция камня соответствует координатам
+                const gemRect = gem.getBoundingClientRect();
+                const gemCenter = {
+                    x: gemRect.left + gemRect.width / 2,
+                    y: gemRect.top + gemRect.height / 2
+                };
+                const expectedCenter = {
+                    x: rect.left + (col * this.cellSize) + (this.cellSize / 2),
+                    y: rect.top + (row * this.cellSize) + (this.cellSize / 2)
+                };
+                
+                // Допустимое отклонение в пикселях
+                const tolerance = 5;
+                if (Math.abs(gemCenter.x - expectedCenter.x) <= tolerance &&
+                    Math.abs(gemCenter.y - expectedCenter.y) <= tolerance) {
+                    return { row, col };
+                }
+                
+                // Если позиция не соответствует, ищем ближайший камень
+                for (let r = 0; r < this.gridSize; r++) {
+                    for (let c = 0; c < this.gridSize; c++) {
+                        const nearbyGem = this.getGemElement(r, c);
+                        if (nearbyGem) {
+                            const nearbyRect = nearbyGem.getBoundingClientRect();
+                            if (x >= nearbyRect.left && x <= nearbyRect.right &&
+                                y >= nearbyRect.top && y <= nearbyRect.bottom) {
+                                return { row: r, col: c };
+                            }
+                        }
+                    }
+                }
+            }
         }
         return null;
     }
@@ -42,13 +76,20 @@ class MultiplayerMatch3Game {
         if (!coords) return;
 
         const { row, col } = coords;
+        console.log('Click coordinates:', row, col);
+        console.log('Grid value at coordinates:', this.grid[row][col]);
         
+        // Проверяем, что в этой позиции есть камень
+        const clickedGem = this.getGemElement(row, col);
+        if (!clickedGem || !this.grid[row][col]) {
+            console.log('No valid gem at coordinates');
+            return;
+        }
+
         if (!this.selectedGem) {
             this.selectedGem = { row, col };
-            const gem = this.getGemElement(row, col);
-            if (gem) {
-                gem.classList.add('selected');
-            }
+            clickedGem.classList.add('selected');
+            console.log('Selected gem:', this.selectedGem);
         } else {
             const previousGem = this.getGemElement(this.selectedGem.row, this.selectedGem.col);
             if (previousGem) {
@@ -56,15 +97,85 @@ class MultiplayerMatch3Game {
             }
 
             if (this.isAdjacent(this.selectedGem, { row, col })) {
+                console.log('Swapping gems:', this.selectedGem, 'with', { row, col });
                 this.swapGems(this.selectedGem, { row, col });
                 this.socket.emit('move', {
                     from: this.selectedGem,
                     to: { row, col }
                 });
+            } else {
+                console.log('Gems are not adjacent');
             }
             
             this.selectedGem = null;
         }
+    }
+
+    async swapGems(gem1, gem2) {
+        if (this.isAnimating) return;
+        this.isAnimating = true;
+
+        console.log('Starting swap:', gem1, gem2);
+        console.log('Grid before swap:', 
+            'gem1:', this.grid[gem1.row][gem1.col],
+            'gem2:', this.grid[gem2.row][gem2.col]
+        );
+
+        const element1 = this.getGemElement(gem1.row, gem1.col);
+        const element2 = this.getGemElement(gem2.row, gem2.col);
+
+        if (!element1 || !element2) {
+            console.log('Missing elements for swap');
+            this.isAnimating = false;
+            return;
+        }
+
+        element1.classList.add('swapping');
+        element2.classList.add('swapping');
+
+        // Обновляем позиции в DOM
+        this.updateGemPosition(element1, gem2.row, gem2.col);
+        this.updateGemPosition(element2, gem1.row, gem1.col);
+
+        // Обновляем данные в сетке
+        const temp = this.grid[gem1.row][gem1.col];
+        this.grid[gem1.row][gem1.col] = this.grid[gem2.row][gem2.col];
+        this.grid[gem2.row][gem2.col] = temp;
+
+        // Обновляем кэш элементов
+        this.gemElements.set(`${gem1.row}-${gem1.col}`, element2);
+        this.gemElements.set(`${gem2.row}-${gem2.col}`, element1);
+
+        console.log('Grid after swap:', 
+            'gem1:', this.grid[gem1.row][gem1.col],
+            'gem2:', this.grid[gem2.row][gem2.col]
+        );
+
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+        element1.classList.remove('swapping');
+        element2.classList.remove('swapping');
+
+        const hasMatches = await this.checkAndRemoveMatches();
+        console.log('Has matches after swap:', hasMatches);
+
+        if (!hasMatches) {
+            console.log('No matches, reverting swap');
+            // Отменяем свап
+            this.updateGemPosition(element1, gem1.row, gem1.col);
+            this.updateGemPosition(element2, gem2.row, gem2.col);
+
+            const temp = this.grid[gem1.row][gem1.col];
+            this.grid[gem1.row][gem1.col] = this.grid[gem2.row][gem2.col];
+            this.grid[gem2.row][gem2.col] = temp;
+
+            this.gemElements.set(`${gem1.row}-${gem1.col}`, element1);
+            this.gemElements.set(`${gem2.row}-${gem2.col}`, element2);
+
+            await new Promise(resolve => setTimeout(resolve, 300));
+        }
+
+        this.isAnimating = false;
     }
 
     updateGemPosition(element, row, col) {
@@ -255,57 +366,6 @@ class MultiplayerMatch3Game {
     handleServerMove(data) {
         const { from, to } = data;
         this.swapGems(from, to);
-    }
-
-    async swapGems(gem1, gem2) {
-        if (this.isAnimating) return;
-        this.isAnimating = true;
-
-        const element1 = this.getGemElement(gem1.row, gem1.col);
-        const element2 = this.getGemElement(gem2.row, gem2.col);
-
-        if (!element1 || !element2) {
-            this.isAnimating = false;
-            return;
-        }
-
-        element1.classList.add('swapping');
-        element2.classList.add('swapping');
-
-        // Обновляем позиции в DOM
-        this.updateGemPosition(element1, gem2.row, gem2.col);
-        this.updateGemPosition(element2, gem1.row, gem1.col);
-
-        // Обновляем данные в сетке
-        const temp = this.grid[gem1.row][gem1.col];
-        this.grid[gem1.row][gem1.col] = this.grid[gem2.row][gem2.col];
-        this.grid[gem2.row][gem2.col] = temp;
-
-        // Обновляем кэш элементов
-        this.gemElements.set(`${gem1.row}-${gem1.col}`, element2);
-        this.gemElements.set(`${gem2.row}-${gem2.col}`, element1);
-
-        await new Promise(resolve => setTimeout(resolve, 300));
-
-        element1.classList.remove('swapping');
-        element2.classList.remove('swapping');
-
-        if (!await this.checkAndRemoveMatches()) {
-            // Отменяем свап
-            this.updateGemPosition(element1, gem1.row, gem1.col);
-            this.updateGemPosition(element2, gem2.row, gem2.col);
-
-            const temp = this.grid[gem1.row][gem1.col];
-            this.grid[gem1.row][gem1.col] = this.grid[gem2.row][gem2.col];
-            this.grid[gem2.row][gem2.col] = temp;
-
-            this.gemElements.set(`${gem1.row}-${gem1.col}`, element1);
-            this.gemElements.set(`${gem2.row}-${gem2.col}`, element2);
-
-            await new Promise(resolve => setTimeout(resolve, 300));
-        }
-
-        this.isAnimating = false;
     }
 
     async checkAndRemoveMatches() {
