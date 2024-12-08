@@ -111,9 +111,10 @@ button:hover {
 }
 
 .grid {
-    display: grid;
-    grid-template-columns: repeat(8, 1fr);
-    gap: 4px;
+    display: block;
+    position: relative;
+    width: 416px;
+    height: 416px;
     background: rgba(0, 0, 0, 0.2);
     padding: 4px;
     border-radius: 4px;
@@ -124,10 +125,13 @@ button:hover {
     height: 50px;
     border-radius: 8px;
     cursor: pointer;
-    transition: transform 0.2s, opacity 0.2s;
+    position: absolute;
+    transform: translate(0, 0);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     display: flex;
     justify-content: center;
     align-items: center;
+    will-change: transform;
 }
 
 .gem:hover {
@@ -136,36 +140,35 @@ button:hover {
 
 .gem.selected {
     transform: scale(1.2);
-    box-shadow: 0 0 10px white;
+    box-shadow: 0 0 15px rgba(255, 255, 255, 0.8);
+    z-index: 1;
 }
 
 .gem.matched {
-    animation: matchAnimation 0.5s forwards;
+    animation: matchAnimation 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
-.gem.falling {
-    animation: fallAnimation 0.5s;
+.gem.swapping {
+    z-index: 2;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.gem.dropping {
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 @keyframes matchAnimation {
     0% {
         transform: scale(1);
+        opacity: 1;
     }
     50% {
         transform: scale(1.2);
+        opacity: 0.8;
     }
     100% {
         transform: scale(0);
         opacity: 0;
-    }
-}
-
-@keyframes fallAnimation {
-    0% {
-        transform: translateY(-50px);
-    }
-    100% {
-        transform: translateY(0);
     }
 }
 
