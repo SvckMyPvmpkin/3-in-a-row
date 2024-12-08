@@ -6,8 +6,11 @@ class MultiplayerMatch3Game {
         this.selectedGem = null;
         this.gemTypes = ['red', 'blue', 'green', 'yellow', 'purple', 'orange'];
         this.gridElement = document.querySelector('.grid');
+        this.gemElements = new Map(); // Кэш DOM-элементов
+        this.cellSize = 52; // 50px + 2px gap
         this.playerId = null;
         this.gameActive = false;
+        this.isAnimating = false;
         this.setupSocketListeners();
         this.setupUIListeners();
     }
@@ -151,16 +154,24 @@ class MultiplayerMatch3Game {
 
     renderGrid() {
         this.gridElement.innerHTML = '';
+        this.gemElements.clear();
+        
         for (let row = 0; row < this.gridSize; row++) {
             for (let col = 0; col < this.gridSize; col++) {
                 const gem = document.createElement('div');
                 gem.className = `gem gem-${this.grid[row][col]}`;
+                gem.style.transform = `translate(${col * this.cellSize}px, ${row * this.cellSize}px)`;
                 gem.dataset.row = row;
                 gem.dataset.col = col;
                 gem.addEventListener('click', () => this.handleGemClick(row, col));
                 this.gridElement.appendChild(gem);
+                this.gemElements.set(`${row}-${col}`, gem);
             }
         }
+    }
+
+    getGemElement(row, col) {
+        return this.gemElements.get(`${row}-${col}`);
     }
 
     handleGemClick(row, col) {
@@ -200,22 +211,126 @@ class MultiplayerMatch3Game {
     }
 
     async swapGems(gem1, gem2) {
+        if (this.isAnimating) return;
+        this.isAnimating = true;
+
+        const element1 = this.getGemElement(gem1.row, gem1.col);
+        const element2 = this.getGemElement(gem2.row, gem2.col);
+
+        // Добавляем класс для анимации
+        element1.classList.add('swapping');
+        element2.classList.add('swapping');
+
+        // Меняем позиции в CSS
+        const pos1 = `translate(${gem1.col * this.cellSize}px, ${gem1.row * this.cellSize}px)`;
+        const pos2 = `translate(${gem2.col * this.cellSize}px, ${gem2.row * this.cellSize}px)`;
+        
+        element1.style.transform = pos2;
+        element2.style.transform = pos1;
+
+        // Меняем значения в сетке
         const temp = this.grid[gem1.row][gem1.col];
         this.grid[gem1.row][gem1.col] = this.grid[gem2.row][gem2.col];
         this.grid[gem2.row][gem2.col] = temp;
-        
-        this.renderGrid();
 
+        // Обновляем кэш элементов
+        this.gemElements.set(`${gem1.row}-${gem1.col}`, element2);
+        this.gemElements.set(`${gem2.row}-${gem2.col}`, element1);
+
+        // Ждем завершения анимации
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+        element1.classList.remove('swapping');
+        element2.classList.remove('swapping');
+
+        // Проверяем совпадения
         if (!await this.checkAndRemoveMatches()) {
+            // Если совпадений нет, меняем обратно
+            element1.style.transform = pos1;
+            element2.style.transform = pos2;
+
             const temp = this.grid[gem1.row][gem1.col];
             this.grid[gem1.row][gem1.col] = this.grid[gem2.row][gem2.col];
             this.grid[gem2.row][gem2.col] = temp;
-            this.renderGrid();
+
+            this.gemElements.set(`${gem1.row}-${gem1.col}`, element1);
+            this.gemElements.set(`${gem2.row}-${gem2.col}`, element2);
+
+            await new Promise(resolve => setTimeout(resolve, 300));
+        }
+
+        this.isAnimating = false;
+    }
+
+    async dropGems() {
+        let dropped = false;
+
+        for (let col = 0; col < this.gridSize; col++) {
+            let emptyRow = this.gridSize - 1;
+            
+            while (emptyRow >= 0) {
+                if (this.grid[emptyRow][col] === null) {
+                    let gemRow = emptyRow - 1;
+                    while (gemRow >= 0 && this.grid[gemRow][col] === null) {
+                        gemRow--;
+                    }
+
+                    if (gemRow >= 0) {
+                        const gem = this.getGemElement(gemRow, col);
+                        if (gem) {
+                            gem.classList.add('dropping');
+                            gem.style.transform = `translate(${col * this.cellSize}px, ${emptyRow * this.cellSize}px)`;
+                            
+                            this.grid[emptyRow][col] = this.grid[gemRow][col];
+                            this.grid[gemRow][col] = null;
+                            
+                            this.gemElements.set(`${emptyRow}-${col}`, gem);
+                            this.gemElements.delete(`${gemRow}-${col}`);
+                            
+                            dropped = true;
+                        }
+                    }
+                }
+                emptyRow--;
+            }
+        }
+
+        if (dropped) {
+            await new Promise(resolve => setTimeout(resolve, 300));
+            document.querySelectorAll('.gem.dropping').forEach(gem => {
+                gem.classList.remove('dropping');
+            });
         }
     }
 
-    getGemElement(row, col) {
-        return this.gridElement.children[row * this.gridSize + col];
+    fillEmptySpaces() {
+        for (let row = 0; row < this.gridSize; row++) {
+            for (let col = 0; col < this.gridSize; col++) {
+                if (this.grid[row][col] === null) {
+                    const gemType = this.getRandomGemType();
+                    this.grid[row][col] = gemType;
+                    
+                    const gem = document.createElement('div');
+                    gem.className = `gem gem-${gemType}`;
+                    gem.style.transform = `translate(${col * this.cellSize}px, ${row * this.cellSize}px)`;
+                    gem.dataset.row = row;
+                    gem.dataset.col = col;
+                    gem.addEventListener('click', () => this.handleGemClick(row, col));
+                    
+                    // Начальная позиция над сеткой
+                    gem.style.transform = `translate(${col * this.cellSize}px, ${-this.cellSize}px)`;
+                    this.gridElement.appendChild(gem);
+                    
+                    // Анимация падения
+                    requestAnimationFrame(() => {
+                        gem.classList.add('dropping');
+                        gem.style.transform = `translate(${col * this.cellSize}px, ${row * this.cellSize}px)`;
+                    });
+                    
+                    this.gemElements.set(`${row}-${col}`, gem);
+                }
+            }
+        }
     }
 
     async checkAndRemoveMatches() {
@@ -287,45 +402,6 @@ class MultiplayerMatch3Game {
         }
 
         return match;
-    }
-
-    async dropGems() {
-        let dropped = false;
-
-        for (let col = 0; col < this.gridSize; col++) {
-            let emptyRow = this.gridSize - 1;
-            
-            while (emptyRow >= 0) {
-                if (this.grid[emptyRow][col] === null) {
-                    let gemRow = emptyRow - 1;
-                    while (gemRow >= 0 && this.grid[gemRow][col] === null) {
-                        gemRow--;
-                    }
-
-                    if (gemRow >= 0) {
-                        this.grid[emptyRow][col] = this.grid[gemRow][col];
-                        this.grid[gemRow][col] = null;
-                        dropped = true;
-                    }
-                }
-                emptyRow--;
-            }
-        }
-
-        if (dropped) {
-            this.renderGrid();
-            await new Promise(resolve => setTimeout(resolve, 300));
-        }
-    }
-
-    fillEmptySpaces() {
-        for (let row = 0; row < this.gridSize; row++) {
-            for (let col = 0; col < this.gridSize; col++) {
-                if (this.grid[row][col] === null) {
-                    this.grid[row][col] = this.getRandomGemType();
-                }
-            }
-        }
     }
 }
 
