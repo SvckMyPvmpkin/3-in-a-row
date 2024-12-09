@@ -1,20 +1,25 @@
 const express = require('express');
+const http = require('http');
+const socketIO = require('socket.io');
+const path = require('path');
+
 const app = express();
-const http = require('http').createServer(app);
-const io = require('socket.io')(http, {
+const server = http.createServer(app);
+const io = require('socket.io')(server, {
     cors: {
         origin: "*",
         methods: ["GET", "POST"]
     }
 });
 
-app.use(express.static('.'));
+
+app.use(express.static('public'));
 
 app.get('/health', (req, res) => {
     res.send('OK');
 });
 
-const GAME_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
+const GAME_DURATION = 5 * 60 * 1000;
 const MIN_PLAYERS = 2;
 const MAX_PLAYERS = 4;
 
@@ -24,7 +29,7 @@ class GameRoom {
         this.players = new Map();
         this.gameStarted = false;
         this.gameEndTime = null;
-        this.playerGrids = new Map(); // Хранение отдельных полей для каждого игрока
+        this.playerGrids = new Map();
     }
 
     addPlayer(socket, playerName) {
@@ -35,7 +40,6 @@ class GameRoom {
             socket: socket
         });
 
-        // Создаем новое поле для игрока
         this.playerGrids.set(socket.id, this.generateInitialGrid());
 
         if (this.players.size >= MIN_PLAYERS && !this.gameStarted) {
@@ -90,7 +94,6 @@ class GameRoom {
         this.gameStarted = true;
         this.gameEndTime = Date.now() + GAME_DURATION;
         
-        // Отправляем каждому игроку его собственное поле
         this.players.forEach(player => {
             player.socket.emit('gameStart', {
                 players: Array.from(this.players.values()).map(p => ({
@@ -146,7 +149,6 @@ class GameRoom {
         const playerGrid = this.playerGrids.get(socketId);
         if (!playerGrid) return;
 
-        // Обновляем только сетку игрока, который сделал ход
         const player = this.players.get(socketId);
         if (player) {
             player.socket.emit('playerMove', {
@@ -199,6 +201,6 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 3000;
-http.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
 });
